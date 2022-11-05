@@ -13,6 +13,7 @@ import warnings
 from . import compat, errors, handlers, tags, util
 from .backend import json
 from .compat import numeric_types
+#from builtins import None
 
 
 def decode(
@@ -25,6 +26,7 @@ def decode(
     classes=None,
     v1_decode=False,
     on_missing="ignore",
+    decode_token=None,
 ):
     """Convert a JSON string into a Python object.
 
@@ -58,6 +60,15 @@ def decode(
     non-awaitable function, it will call said callback function with the class
     name (a string) as the only parameter. Strings passed to on_missing are
     lowercased automatically.
+    
+    The keyword 'decode_token' defaults to None
+    This keyword is used to identify reference to objects in the json string.
+    The nominal functioning of jsonpickle to identify objects is the following: 
+        {"port": {"py/id":1}}
+    With the proposed implementation, using the token 'refObj#':
+        {"port": "refObj#1}
+    The latter makes jsonpickle compatible with Java library Jackson, improving 
+    the library capabilities to be used in generic APIs
 
 
     >>> decode('"my string"') == 'my string'
@@ -80,6 +91,7 @@ def decode(
         safe=safe,
         v1_decode=v1_decode,
         on_missing=on_missing,
+        decode_token=decode_token,
     )
     data = backend.decode(string)
     return context.restore(data, reset=reset, classes=classes)
@@ -292,13 +304,14 @@ def has_tag_dict(obj, tag):
 
 class Unpickler(object):
     def __init__(
-        self, backend=None, keys=False, safe=False, v1_decode=False, on_missing="ignore"
+        self, backend=None, keys=False, safe=False, v1_decode=False, on_missing="ignore", decode_token=None,
     ):
         self.backend = backend or json
         self.keys = keys
         self.safe = safe
         self.v1_decode = v1_decode
         self.on_missing = on_missing
+        self.decode_token = decode_token
 
         self.reset()
 
@@ -312,7 +325,7 @@ class Unpickler(object):
 
         # Map of objects to their index in the _objs list
         self._obj_to_idx = {}
-        self._objs = []
+        self._objs = {}
         self._proxies = []
 
         # Extra local classes not accessible globally
@@ -324,16 +337,16 @@ class Unpickler(object):
             method(obj, attr, proxy)
         self._proxies = []
 
-    def _restore(self, obj):
+    def _restore(self, obj, key=None):
         # if obj isn't in these types, neither it nor nothing in it can have a tag
         # don't change the tuple of types to a set, it won't work with isinstance
-        if not isinstance(obj, (str, list, dict, set, tuple)):
+        if not isinstance(obj, (unicode, str, list, dict, set, tuple)):
 
             def restore(x):
                 return x
 
         else:
-            restore = self._restore_tags(obj)
+            restore = self._restore_tags(obj, key)
         return restore(obj)
 
     def restore(self, obj, reset=True, classes=None):
@@ -403,13 +416,15 @@ class Unpickler(object):
         """
         return '/' + '/'.join(self._namestack)
 
-    def _mkref(self, obj):
+    def _mkref(self, obj, pyId = None):
         obj_id = id(obj)
         try:
             self._obj_to_idx[obj_id]
         except KeyError:
-            self._obj_to_idx[obj_id] = len(self._objs)
-            self._objs.append(obj)
+            if pyId is None:
+                pyId = len(self._objs)
+            self._obj_to_idx[obj_id] = pyId
+            self._objs[pyId] = obj
             # Backwards compatibility: old versions of jsonpickle
             # produced "py/ref" references.
             self._namedict[self._refname()] = obj
@@ -510,7 +525,7 @@ class Unpickler(object):
         try:
             idx = obj[tags.ID]
             return self._objs[idx]
-        except IndexError:
+        except KeyError:
             return _IDProxy(self._objs, idx)
 
     def _restore_ref(self, obj):
@@ -599,7 +614,7 @@ class Unpickler(object):
             self._namestack.append(str_k)
             k = restore_key(k)
             # step into the namespace
-            value = self._restore(v)
+            value = self._restore(v,k)
             if util.is_noncomplex(instance) or util.is_dictionary_subclass(instance):
                 try:
                     if k == '__dict__':
@@ -683,7 +698,11 @@ class Unpickler(object):
         # This is a placeholder proxy object which allows child objects to
         # reference the parent object before it has been instantiated.
         proxy = _Proxy()
-        self._mkref(proxy)
+        try:
+            pyId = obj[tags.ID]
+        except KeyError:
+            pyId = None
+        self._mkref(proxy,pyId)
 
         # An object can install itself as its own factory, so load the factory
         # after the instance is available for referencing.
@@ -809,13 +828,23 @@ class Unpickler(object):
                 self._namestack.pop()
         return data
 
-    def _restore_tags(self, obj):
+    def _restore_tags(self, obj, key):
         try:
             if not tags.RESERVED <= set(obj) and not type(obj) in (list, dict):
 
-                def restore(x):
-                    return x
+                if ((type(obj) is str) or (type(obj) is unicode)) and \
+                ((key is not None) and (key is not tags.RESERVED)) and \
+                ((self.decode_token is not None) and (self.decode_token in obj)):
 
+                    def restore(x):
+                        obj = {tags.ID: x}
+                        return self._restore_id(obj)
+
+                else:
+
+                    def restore(x):
+                        return 
+                    
                 return restore
         except TypeError:
             pass
@@ -828,7 +857,8 @@ class Unpickler(object):
                 restore = self._restore_base64
             elif has_tag_dict(obj, tags.B85):
                 restore = self._restore_base85
-            elif has_tag_dict(obj, tags.ID):
+            elif has_tag_dict(obj, tags.ID) and not \
+            has_tag_dict(obj, tags.OBJECT):
                 restore = self._restore_id
             elif has_tag_dict(obj, tags.ITERATOR):
                 restore = self._restore_iterator

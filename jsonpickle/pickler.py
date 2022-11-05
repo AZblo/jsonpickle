@@ -34,6 +34,8 @@ def encode(
     fail_safe=None,
     indent=None,
     separators=None,
+    jackson_style=False,
+    encode_token=None,
 ):
     """Return a JSON formatted representation of value, a Python object.
 
@@ -106,6 +108,17 @@ def encode(
         separators.  ``(',', ':')`` is the most compact JSON representation.
         This value is passed directly to the active JSON backend library and
         not used by jsonpickle directly.
+    :param jackson_style:
+        When true, the referencedId/referencedClass couple is generated to mark 
+        any new object univocally. 
+    :param encode_token:
+        When provided, the Id of objects is given as string with prefix token. 
+        The nominal functioning of jsonpickle to identify objects is the following: 
+            {"port": {"py/id":1}}
+        With the proposed implementation, using the token 'refObj#':
+            {"port": "refObj#1}
+        The latter makes jsonpickle compatible with Java library Jackson, improving 
+        the library capabilities to be used in generic APIs
 
     >>> encode('my string') == '"my string"'
     True
@@ -130,6 +143,8 @@ def encode(
         use_decimal=use_decimal,
         use_base85=use_base85,
         fail_safe=fail_safe,
+        jackson_style=jackson_style,
+        encode_token=encode_token,
     )
     return backend.encode(
         context.flatten(value, reset=reset), indent=indent, separators=separators
@@ -176,6 +191,8 @@ class Pickler(object):
         use_decimal=False,
         use_base85=False,
         fail_safe=None,
+        jackson_style=False,
+        encode_token=None,
     ):
         self.unpicklable = unpicklable
         self.make_refs = make_refs
@@ -208,6 +225,15 @@ class Pickler(object):
 
         # ignore exceptions
         self.fail_safe = fail_safe
+        
+        # encode_token and jackson_style option
+        if encode_token is not None:
+            # if encode_token is provided, jackson style must be true
+            self.jackson_style=True;
+        else:
+            self.jackson_style = jackson_style;
+
+        self.encode_token = encode_token;
 
     def reset(self):
         self._objs = {}
@@ -238,7 +264,13 @@ class Pickler(object):
         is_new = objid not in self._objs
         if is_new:
             new_id = len(self._objs)
-            self._objs[objid] = new_id
+            if type(obj) in (list, dict): # do not store dict or types in the list of known objects
+                pass
+            else:
+                if self.encode_token is None:
+                    self._objs[objid] = new_id
+                else:
+                    self._objs[objid] = self.encode_token+str(new_id)
         return is_new
 
     def _mkref(self, obj):
@@ -252,8 +284,13 @@ class Pickler(object):
         return pretend_new or is_new
 
     def _getref(self, obj):
-        return {tags.ID: self._objs.get(id(obj))}
-
+        objid = self._objs.get(id(obj))
+        
+        if self.encode_token is None:
+            return {tags.ID: objid}
+        else:
+            return str(objid)
+        
     def _flatten(self, obj):
         if self.unpicklable and self.make_refs:
             result = self._flatten_impl(obj)
@@ -460,7 +497,7 @@ class Pickler(object):
             cls = obj.__class__
         else:
             cls = type(obj)
-
+            
         # Check for a custom handler
         class_name = util.importable_name(cls)
         handler = handlers.get(cls, handlers.get(class_name))
@@ -545,6 +582,9 @@ class Pickler(object):
         if has_class and not util.is_module(obj):
             if self.unpicklable:
                 data[tags.OBJECT] = class_name
+                
+                if self.jackson_style:
+                    data[tags.ID] = self._objs[id(obj)]
 
             if has_getnewargs_ex:
                 data[tags.NEWARGSEX] = list(map(self._flatten, obj.__getnewargs_ex__()))
