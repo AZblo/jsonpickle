@@ -12,7 +12,8 @@ import warnings
 
 from . import compat, errors, handlers, tags, util
 from .backend import json
-from .compat import numeric_types
+from .compat import numeric_types, unicode
+
 #from builtins import None
 
 

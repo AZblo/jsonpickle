@@ -21,6 +21,7 @@ if PY3:
     string_types = (str,)
     numeric_types = (int, float)
     ustr = str
+    unicode = str
 else:
     from collections import Iterator as abc_iterator  # noqa
 
@@ -32,7 +33,7 @@ else:
     numeric_types = (int, float, builtins.long)
     queue = __import__('Queue')
     ustr = builtins.unicode
-
+    unicode = builtins.unicode
 
 def iterator(class_):
     if PY2 and hasattr(class_, '__next__'):
