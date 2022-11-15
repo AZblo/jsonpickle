@@ -614,6 +614,7 @@ class Unpickler(object):
                 str_k = k
             self._namestack.append(str_k)
             k = restore_key(k)
+            
             # step into the namespace
             value = self._restore(v,k)
             if util.is_noncomplex(instance) or util.is_dictionary_subclass(instance):
@@ -830,11 +831,13 @@ class Unpickler(object):
         return data
 
     def _restore_tags(self, obj, key):
+        
         try:
             if not tags.RESERVED <= set(obj) and not type(obj) in (list, dict):
 
+                #(key is not None) and 
                 if ((type(obj) is str) or (type(obj) is unicode)) and \
-                ((key is not None) and (key is not tags.RESERVED)) and \
+                ((key is not tags.RESERVED)) and \
                 ((self.decode_token is not None) and (self.decode_token in obj)):
 
                     def restore(x):
@@ -844,7 +847,7 @@ class Unpickler(object):
                 else:
 
                     def restore(x):
-                        return 
+                        return x
                     
                 return restore
         except TypeError:
