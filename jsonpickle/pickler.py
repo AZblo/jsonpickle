@@ -36,6 +36,7 @@ def encode(
     separators=None,
     jackson_style=False,
     encode_token=None,
+    pre_flatten_function=None,
 ):
     """Return a JSON formatted representation of value, a Python object.
 
@@ -119,6 +120,9 @@ def encode(
             {"port": "refObj#1}
         The latter makes jsonpickle compatible with Java library Jackson, improving 
         the library capabilities to be used in generic APIs
+    :param pre_flatten_function:
+        optional argument to include a function to manipulate custom classes before 
+        flattening the objects
 
     >>> encode('my string') == '"my string"'
     True
@@ -145,6 +149,7 @@ def encode(
         fail_safe=fail_safe,
         jackson_style=jackson_style,
         encode_token=encode_token,
+        pre_flatten_function=pre_flatten_function,
     )
     return backend.encode(
         context.flatten(value, reset=reset), indent=indent, separators=separators
@@ -193,6 +198,7 @@ class Pickler(object):
         fail_safe=None,
         jackson_style=False,
         encode_token=None,
+        pre_flatten_function=None,
     ):
         self.unpicklable = unpicklable
         self.make_refs = make_refs
@@ -234,6 +240,8 @@ class Pickler(object):
             self.jackson_style = jackson_style;
 
         self.encode_token = encode_token;
+        
+        self.pre_flatten_function = pre_flatten_function;
 
     def reset(self):
         self._objs = {}
@@ -292,6 +300,11 @@ class Pickler(object):
             return str(objid)
         
     def _flatten(self, obj):
+        
+        # check if object needs pre_flatten function
+        if self.pre_flatten_function is not None:
+            obj = self.pre_flatten_function(obj)
+        
         if self.unpicklable and self.make_refs:
             result = self._flatten_impl(obj)
         else:
@@ -329,6 +342,7 @@ class Pickler(object):
         >>> p.flatten({'key': 'value'}) == {'key': 'value'}
         True
         """
+        
         if reset:
             self.reset()
         return self._flatten(obj)
@@ -449,6 +463,7 @@ class Pickler(object):
         return None
 
     def _ref_obj_instance(self, obj):
+        
         """Reference an existing object or flatten if new"""
         if self.unpicklable:
             if self._mkref(obj):
@@ -632,6 +647,10 @@ class Pickler(object):
 
             # hack for zope persistent objects; this unghostifies the object
             getattr(obj, '_', None)
+            
+            if 'filter_func' in obj.__dict__:
+                pass
+            
             return self._flatten_dict_obj(obj.__dict__, data)
 
         if has_slots:
