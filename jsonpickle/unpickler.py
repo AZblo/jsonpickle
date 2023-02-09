@@ -827,6 +827,9 @@ class Unpickler(object):
                     str_k = k
                 self._namestack.append(str_k)
                 data[k] = self._restore(v)
+                # k is currently a proxy and must be replaced
+                if isinstance(data[k], _Proxy):
+                    self._proxies.append((data, k, data[k], _obj_setvalue))
                 self._namestack.pop()
         return data
 
